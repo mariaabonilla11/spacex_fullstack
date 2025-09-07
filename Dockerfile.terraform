@@ -1,0 +1,15 @@
+FROM hashicorp/terraform:latest
+
+# Instalar AWS CLI y Python
+RUN apk add --no-cache aws-cli python3 py3-pip
+
+# Crear virtual environment para evitar el error
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Instalar boto3 en el virtual environment
+RUN pip install boto3
+
+WORKDIR /workspace
+
+CMD ["terraform", "--help"]

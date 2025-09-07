@@ -12,7 +12,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Solo la tabla DynamoDB para lanzamientos de SpaceX
+# Tabla DynamoDB para lanzamientos de SpaceX
 resource "aws_dynamodb_table" "spacex_launches" {
   name         = "${var.project_name}-${var.environment}"
   billing_mode = "PAY_PER_REQUEST"
