@@ -19,10 +19,19 @@ table = dynamodb.Table(table_name)
 def lambda_handler(event, context):
     """
     Función Lambda que obtiene datos de SpaceX API y los guarda en DynamoDB
-    Se ejecuta cada 6 horas automáticamente
+    Soporta invocación manual para testing y ejecución programada
     """
     try:
         logger.info("Iniciando procesamiento de datos de SpaceX...")
+        
+        # Detectar tipo de invocación
+        is_manual_test = (
+            event.get('httpMethod') == 'POST' or  # Viene de API Gateway
+            event.get('source') == 'manual-test' or  # Invocación directa
+            'body' in event  # API Gateway siempre incluye body
+        )
+        
+        logger.info(f"Tipo de invocación: {'manual' if is_manual_test else 'programada'}")
         
         # Obtener datos de la API de SpaceX
         spacex_data = fetch_spacex_launches()
@@ -36,11 +45,29 @@ def lambda_handler(event, context):
         
         logger.info(f"Procesamiento completado: {result}")
         
-        return create_response(200, {
+        # Respuesta detallada para invocación manual
+        response_body = {
             'message': 'Procesamiento exitoso',
-            'result': result,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+            'execution_type': 'manual' if is_manual_test else 'scheduled',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'summary': {
+                'total_processed': result['processed'],
+                'new_records': result['created'],
+                'updated_records': result['updated'],
+                'errors': result['errors'],
+                'api_endpoint': 'https://api.spacexdata.com/v3/launches',
+                'table_name': table_name
+            }
+        }
+        
+        # Si es manual, agregar más detalles
+        if is_manual_test:
+            response_body['details'] = {
+                'latest_launches': get_latest_launches_summary(),
+                'table_stats': get_table_stats()
+            }
+        
+        return create_response(200, response_body)
         
     except Exception as e:
         logger.error(f"Error en lambda_handler: {str(e)}")
@@ -227,13 +254,65 @@ def create_response(status_code: int, body: Any) -> Dict[str, Any]:
         'body': json.dumps(body, default=str)
     }
 
+def get_latest_launches_summary():
+    """Obtener resumen de los últimos lanzamientos procesados"""
+    try:
+        response = table.scan(Limit=5)
+        items = response.get('Items', [])
+        
+        # Ordenar por flight_number descendente
+        sorted_items = sorted(items, 
+                            key=lambda x: int(x.get('flight_number', 0)) if x.get('flight_number') else 0, 
+                            reverse=True)
+        
+        summary = []
+        for item in sorted_items[:5]:
+            summary.append({
+                'flight_number': str(item.get('flight_number', '')),
+                'mission_name': item.get('mission_name', ''),
+                'rocket_name': item.get('rocket_name', ''),
+                'launch_date': item.get('launch_date', ''),
+                'status': item.get('status', ''),
+                'last_updated': item.get('last_updated', '')
+            })
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen: {e}")
+        return []
+
+def get_table_stats():
+    """Obtener estadísticas de la tabla DynamoDB"""
+    try:
+        response = table.scan()
+        items = response.get('Items', [])
+        
+        stats = {
+            'total_records': len(items),
+            'by_status': {},
+            'by_rocket': {}
+        }
+        
+        for item in items:
+            # Stats por status
+            status = item.get('status', 'unknown')
+            stats['by_status'][status] = stats['by_status'].get(status, 0) + 1
+            
+            # Stats por cohete
+            rocket = item.get('rocket_name', 'Unknown')
+            stats['by_rocket'][rocket] = stats['by_rocket'].get(rocket, 0) + 1
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo stats: {e}")
+        return {}
+
 if __name__ == "__main__":
     # Evento de prueba simulado (ajusta según lo que quieras probar)
     test_event = {}
     test_context = None  # Contexto vacío para pruebas locales
-
-    # Puedes definir la variable de entorno aquí si no la tienes exportada
-    # os.environ['DYNAMODB_TABLE_NAME'] = 'spacex-launches-dev'
 
     response = lambda_handler(test_event, test_context)
     print(json.dumps(response, indent=2))
